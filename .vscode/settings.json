@@ -1,0 +1,6 @@
+{
+    "python.pythonPath": "/home/fbrad/anaconda3/envs/pytorch10/bin/python",
+    "python.linting.pylintEnabled": true,
+    "python.linting.flake8Enabled": false,
+    "python.linting.enabled": true
+}
