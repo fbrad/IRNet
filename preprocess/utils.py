@@ -24,8 +24,12 @@ def load_dataSets(args):
     with open(args.data_path, 'r', encoding='utf8') as f:
         datas = json.load(f)
 
-    output_tab = {}
-    tables = {}
+    output_tab = {} 
+    # {"db_id": {'schema_content': [...], 'col_table': [...], 'col_set': [...],
+    #             ...
+    #            }
+    # }
+    tables = {}     
     tabel_name = set()
     for i in range(len(table_datas)):
         table = table_datas[i]
@@ -44,6 +48,7 @@ def load_dataSets(args):
         output_tab[db_name] = temp
         tables[db_name] = table
 
+    # annotate training examples with column and table information
     for d in datas:
         d['names'] = tables[d['db_id']]['schema_content']
         d['table_names'] = tables[d['db_id']]['table_names']
@@ -59,6 +64,9 @@ def load_dataSets(args):
     return datas, tables
 
 def group_header(toks, idx, num_toks, header_toks):
+    """
+    Check if question spans/tokens are found in header_toks 
+    """
     for endIdx in reversed(range(idx + 1, num_toks+1)):
         sub_toks = toks[idx: endIdx]
         sub_toks = " ".join(sub_toks)
@@ -67,6 +75,9 @@ def group_header(toks, idx, num_toks, header_toks):
     return idx, None
 
 def fully_part_header(toks, idx, num_toks, header_toks):
+    """
+    Check if question spans are found in header_toks 
+    """
     for endIdx in reversed(range(idx + 1, num_toks+1)):
         sub_toks = toks[idx: endIdx]
         if len(sub_toks) > 1:
@@ -76,7 +87,17 @@ def fully_part_header(toks, idx, num_toks, header_toks):
     return idx, None
 
 def partial_header(toks, idx, header_toks):
+    """
+    Check if question span contains the same tokens of a column
+    Args:    
+        toks: question tokens
+        header_toks: list of lists of column tokens
+    """
+
     def check_in(list_one, list_two):
+        """
+        check if list_two fully included in list_one
+        """
         if len(set(list_one) & set(list_two)) == len(list_one) and (len(list_two) <= 3):
             return True
     for endIdx in reversed(range(idx + 1, len(toks))):
@@ -93,6 +114,9 @@ def partial_header(toks, idx, header_toks):
     return idx, None
 
 def symbol_filter(questions):
+    """
+    Standardize string quotations (["'", '"', '`', '鈥�', '鈥�'] -> "'"
+    """
     question_tmp_q = []
     for q_id, q_val in enumerate(questions):
         if len(q_val) > 2 and q_val[0] in ["'", '"', '`', '鈥�', '鈥�'] and q_val[-1] in ["'", '"', '`', '鈥�']:
@@ -113,6 +137,9 @@ def symbol_filter(questions):
 
 
 def group_values(toks, idx, num_toks):
+    """
+    Check if question tokens contain proper noun span 
+    """
     def check_isupper(tok_lists):
         for tok_one in tok_lists:
             if tok_one[0].isupper() is False:
@@ -121,6 +148,7 @@ def group_values(toks, idx, num_toks):
 
     for endIdx in reversed(range(idx + 1, num_toks + 1)):
         sub_toks = toks[idx: endIdx]
+
 
         if len(sub_toks) > 1 and check_isupper(sub_toks) is True:
             return endIdx, sub_toks
@@ -132,6 +160,7 @@ def group_values(toks, idx, num_toks):
 
 
 def group_digital(toks, idx):
+    # remove ':' and '.'
     test = toks[idx].replace(':', '')
     test = test.replace('.', '')
     if test.isdigit():
@@ -140,6 +169,10 @@ def group_digital(toks, idx):
         return False
 
 def group_symbol(toks, idx, num_toks):
+    """
+    Search for question spans of type VALUE (uni/bi/trigrams surrounded by
+    quotations)
+    """
     if toks[idx-1] == "'":
         for i in range(0, min(3, num_toks-idx)):
             if toks[i + idx] == "'":
@@ -166,7 +199,7 @@ def set_header(toks, header_toks, tok_concol, idx, num_toks):
     return None
 
 def re_lemma(string):
-    lema = lemma(string.lower())
+    lema = wordnet_lemmatizer.lemmatize(string.lower())
     if len(lema) > 0:
         return lema
     else:

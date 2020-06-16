@@ -70,8 +70,26 @@ def get_col_table_dict(tab_cols, tab_ids, sql):
     return col_table_dict
 
 
-def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type, col_set_iter, sql):
-
+def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type, 
+                   col_set_iter, sql):
+    """
+    question_arg: [["how"], ["many"], ["singer"], ... ]
+    question_arg_type: [["NONE"]], ["NONE"], ["table"], ...]
+    one_hot_type: Tensor(len(question_arg) x 5)
+                  for each token marks if it's:
+                      table/column/agg/MORE/MOST/value
+    col_set_type: Tensor(len(col_set_iter) x 4)
+            col_set_type[col][0] = how many times did $col appear in question tokens
+            col_set_type[col][1] = 5, if token/span was marked with 'col'
+            col_set_type[col][2] = 5, if token/span was marked with $col
+            col_set_type[col][3] = how many times did $col appear in question spans
+    col_set_iter: [['*'], ['stadium', 'id'], ['location'], ['highest'], 
+                   ['singer', 'id'], ...]
+    sql: {"col_set": ["*", "stadium id", "location", "name", "capacity",
+                       "highest", "lowest", "average", ...],
+           ...
+         }
+    """
     for count_q, t_q in enumerate(question_arg_type):
         t = t_q[0]
         if t == 'NONE':
@@ -97,6 +115,7 @@ def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type, 
             one_hot_type[count_q][5] = 1
             question_arg[count_q] = ['value'] + question_arg[count_q]
         else:
+            # column name
             if len(t_q) == 1:
                 for col_probase in t_q:
                     if col_probase == 'asd':
@@ -117,7 +136,7 @@ def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type, 
 def process(sql, table):
 
     process_dict = {}
-
+    # origin_sql = ["what", "is", "total", "number", "of", "singer", "?"]
     origin_sql = sql['question_toks']
     table_names = [[wordnet_lemmatizer.lemmatize(v).lower() for v in x.split(' ')] for x in table['table_names']]
 
@@ -126,6 +145,12 @@ def process(sql, table):
     tab_cols = [col[1] for col in table['column_names']]
     tab_ids = [col[0] for col in table['column_names']]
 
+    # sql["col_set"] = ["*", "stadium id", "location", "highest", "singer id"]
+    # col_set_iter = [['*'], ['stadium', 'id'], ['location'], ['highest'], 
+    #                 ['singer', 'id'], ...]
+    # col_iter - similar to col_set_iter
+    # q_iter_small = ['what', 'is', 'total', 'number', 'of', 'singer', '?']
+    # one_hot_type = 
     col_set_iter = [[wordnet_lemmatizer.lemmatize(v).lower() for v in x.split(' ')] for x in sql['col_set']]
     col_iter = [[wordnet_lemmatizer.lemmatize(v).lower() for v in x.split(" ")] for x in tab_cols]
     q_iter_small = [wordnet_lemmatizer.lemmatize(x).lower() for x in origin_sql]
@@ -179,16 +204,26 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed,
 
         process_dict = process(sql, table)
 
+        # col_set_iter: [['*'], ['stadium', 'id'], ['location'], ['highest'], 
+        #                ['singer', 'id'], ...]
+
         for c_id, col_ in enumerate(process_dict['col_set_iter']):
             for q_id, ori in enumerate(process_dict['q_iter_small']):
                 if ori in col_:
                     process_dict['col_set_type'][c_id][0] += 1
 
-        schema_linking(process_dict['question_arg'], process_dict['question_arg_type'],
-                       process_dict['one_hot_type'], process_dict['col_set_type'], process_dict['col_set_iter'], sql)
+        schema_linking(process_dict['question_arg'], 
+                       process_dict['question_arg_type'],
+                       process_dict['one_hot_type'], 
+                       process_dict['col_set_type'], 
+                       process_dict['col_set_iter'], 
+                       sql)
 
-        col_table_dict = get_col_table_dict(process_dict['tab_cols'], process_dict['tab_ids'], sql)
-        table_col_name = get_table_colNames(process_dict['tab_ids'], process_dict['col_iter'])
+        col_table_dict = get_col_table_dict(process_dict['tab_cols'], 
+                                            process_dict['tab_ids'], 
+                                            sql)
+        table_col_name = get_table_colNames(process_dict['tab_ids'], 
+                                            process_dict['col_iter'])
 
         process_dict['col_set_iter'][0] = ['count', 'number', 'many']
 

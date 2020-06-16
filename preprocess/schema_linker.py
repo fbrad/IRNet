@@ -12,6 +12,11 @@ import json
 from torch.nn import CosineSimilarity
 from typing import Dict, List
 
+
+# def cross_encode_all(question: str,
+#                      db_wpieces: List[str]
+#                      )
+
 def cross_encode_pair(question: str,
                       schema_entity_description: str,
                       tokenizer: PreTrainedTokenizer,
@@ -198,8 +203,61 @@ def generate_db_column_annotations(table_dict: Dict) -> List[str]:
             annot_list.append('OTHER')
 
         column_annotations.append(' '.join(annot_list))
-    
+
     return column_annotations
+
+def tokenize_db(table_dict: Dict,
+                tokenizer: PreTrainedTokenizer) -> Dict:
+    """
+    Given dictionary with tables info, tokenize its following representation:
+    "$TABLE_1 $COL_11. $COL_12 [SEP] ... $TABLE_N $COL_N1 $COL_N2 ... [SEP]"
+    
+    Return a dictionary with the following key/values:
+        'entities': a list of database entities
+        'wordpieces': a list of database wordpieces (from tokenizing entities)
+        'entity_idx': lists of entity indices for each wordpiece of a db entity
+        
+    Example: 
+        {'entities': ['schooling', 'school id', 'location', '[SEP]', ...],
+         'wordpieces': ['school', '##ing', 'school', 'id', 'locat', '##ion", ...]
+         'entity_idx': [[17, 17], [0, 0], [1, 1], [-1], [18], [2], [3], ...]
+        }
+    Table indices start from $number_of_columns onwards and correspond to the
+    order in 'table_names' list. Column indices are in the same range as in 
+    the 'column_names' list.
+    """
+    table_names = table_dict["table_names"]
+    column_list = table_dict["column_names"]
+    col_size = len(column_list) 
+
+    entities = []
+    wordpieces = []
+    entity_idx = [] #index in 'column_names' or 'table_names' list
+    for table_idx, table_name in enumerate(table_names):
+        entities.append(table_name)
+        table_toks = tokenizer.tokenize(table_name)
+        wordpieces.extend(table_toks)
+        entity_idx.append([col_size + table_idx] * len(table_toks))
+        
+        for col_idx, (col_table_idx, col_name) in enumerate(column_list):
+            if col_table_idx == table_idx:
+                entities.append(col_name)
+                col_toks = tokenizer.tokenize(col_name)
+                wordpieces.extend(col_toks)      
+                entity_idx.append([col_idx] * len(col_toks))
+
+        entities.append(tokenizer._sep_token)
+        wordpieces.append(tokenizer._sep_token)
+        entity_idx.append([-1])
+
+        # "baseball_1" database is too long
+        if len(wordpieces) > 430:  
+           break
+        
+    return {"entities": entities,
+            "wordpieces": wordpieces,
+            "entity_idx": entity_idx}
+
 
 def get_db_dict_from_id(db_id: str, tables_dict:Dict) -> Dict:
     """
@@ -230,19 +288,36 @@ if __name__ == "__main__":
     stop_words = set(stopwords.words('english'))
     other_toks = set(['[CLS]', '[SEP]', ',', '.', '?'])
     stop_words.update(other_toks)
-
+     
     # read database from tables.json
     with open('/home/fbrad/bit/IRNet/data/tables.json') as json_file:
         databases_dict = json.load(json_file)
-    db_dict = get_db_dict_from_id("car_1", databases_dict)
-    table_annots = generate_db_table_annotations(db_dict)
-    column_annots = generate_db_column_annotations(db_dict)
+    # db_dict = get_db_dict_from_id("car_1", databases_dict)
+    # db_dict = get_db_dict_from_id("cre_Drama_Workshop_Groups", databases_dict)
+    # table_annots = generate_db_table_annotations(db_dict)
+    # column_annots = generate_db_column_annotations(db_dict)
+
+    for db_dict in databases_dict:
+        if db_dict["db_id"] != "car_1":
+           continue
+        out_dict = tokenize_db(db_dict, tokenizer)
+
+        entities = out_dict["entities"]
+        wordpieces = out_dict["wordpieces"]
+        entity_idx = out_dict["entity_idx"]
+        print("entity_idx = ", entity_idx)
+        assert len(entities) == len(entity_idx), "wordpieces != entities len"
+
+        entities_str = " ".join(entities)
+        wps = tokenizer.tokenize(entities_str)
+        assert wps == wordpieces, "different tokenization output"
 
     # sample question
     question = ("For the cars with 4 cylinders, which model has the largest "
                 "horsepower?")
     
     # self.encode(text) <=> self.convert_tokens_to_ids(self.tokenize(text))
+    # [101, ..., 102]
     question_ids = tokenizer.encode(text=question)
 
     # mask stopwords with 0s
@@ -256,8 +331,57 @@ if __name__ == "__main__":
                 stopwords_mask[idx] = 0
 
     # [CLS] question_tokens [SEP] schema_tok_1 ... schema_tok_i
-    schema_tok_idx = len(question_ids) + 2
+    question_offset = len(question_ids) # + 2
 
+    # [..., 102]
+    db_wordpiece_ids = tokenizer.convert_tokens_to_ids(wordpieces)
+    assert len(db_wordpiece_ids) == len(wordpieces), "different wordpiece len"
+
+    #seq_ids = tokenizer.encode(text=question, text_pair=entities_str,
+    #                           add_special_tokens=True)
+    seq_ids = torch.LongTensor([question_ids + db_wordpiece_ids])
+    seq_type_ids = torch.LongTensor([[0] * len(question_ids) + 
+                                     [1] * len(db_wordpiece_ids)])
+
+    # feed sequence to BERT
+    with torch.no_grad():
+        # 1 x T x 768, (1 x T x 768, ...)
+        last_hidden, _, all_hidden = model(input_ids=seq_ids,
+                                           token_type_ids=seq_type_ids)
+
+        # compute embedding for each entity, by averaging over its span tokens
+        entities_output = torch.zeros(len(entities), 768)
+        entity_offset = question_offset
+        for idx, entity in enumerate(entities):
+            if entity == "[SEP]":
+                entity_offset += 1
+                continue
+            entity_len = len(entity_idx[idx])
+
+            entity_output = last_hidden[0, 
+                                        entity_offset:entity_offset+entity_len,
+                                        :].mean(0)
+            entities_output[idx] = entity_output
+            entity_offset += entity_len
+        
+        # compute question token->entity alignments
+        #question_output = last_hidden[0, 1:question_offset-1,:]
+
+        # cosine alignment
+        #print("Question size: ", question_output[0:1,:].size())
+        print("Entities size: ", entities_output.size())
+        print("Entities: ", entities)
+        for idx, token in enumerate(question_tokens):
+            if stopwords_mask[idx] == 0:
+                continue
+            
+            question_output = last_hidden[:, idx, :]
+            align_scores = cos_sim(question_output, entities_output)
+            max_idx = torch.argmax(align_scores).item()
+            print("%s->%s (%d)" % (token, entities[max_idx], max_idx))
+
+
+    """
     alignments_list = []
     for schema_entity_description in table_annots:
         question_output, entity_output = cross_encode_pair(
@@ -295,5 +419,5 @@ if __name__ == "__main__":
         print("%s -> %s: %f" %(tok, table_annots[max_index][:30], max(align_scores)))
 
         #print("cos(%10s, entity) = %s" % (tok, ' '.join(align_scores)))
-
+    """
     
