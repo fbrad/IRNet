@@ -78,8 +78,6 @@ def train(args):
         with open(os.path.join(model_save_path, 'epoch.log'), 'w') as epoch_fd:
             for epoch in tqdm.tqdm(range(args.epoch)):
                 # TODO: move this after loss = utils.epoch_train(...)
-                if args.lr_scheduler:
-                    scheduler.step()
                 epoch_begin = time.time()
                 loss = utils.epoch_train(model, optimizer, args.batch_size, sql_data, table_data, args,
                                    loss_epoch_threshold=args.loss_epoch_threshold,
@@ -94,6 +92,8 @@ def train(args):
                     best_dev_acc = acc
                 utils.save_checkpoint(model, os.path.join(model_save_path, '{%s}_{%s}.model') % (epoch, acc))
 
+                if args.lr_scheduler:
+                    scheduler.step()
                 log_str = 'Epoch: %d, Loss: %f, Sketch Acc: %f, Acc: %f, time: %f\n' % (
                     epoch + 1, loss, sketch_acc, acc, epoch_end - epoch_begin)
                 tqdm.tqdm.write(log_str)
