@@ -14,7 +14,7 @@ import json
 import sys
 
 import copy
-from utils import load_dataSets
+from .utils import load_dataSets
 
 sys.path.append("..")
 from src.rule.semQL import Root1, Root, N, A, C, T, Sel, Sup, Filter, Order
@@ -387,5 +387,5 @@ if __name__ == '__main__':
 
     print('Finished %s datas and failed %s datas' % (len(processed_data), len(datas) - len(processed_data)))
     with open(args.output, 'w', encoding='utf8') as f:
-        f.write(json.dumps(processed_data))
+        f.write(json.dumps(processed_data, indent=4))
 

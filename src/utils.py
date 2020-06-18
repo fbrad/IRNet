@@ -17,7 +17,7 @@ import numpy as np
 import os
 import torch
 from nltk.stem import WordNetLemmatizer
-
+import pickle
 from src.dataset import Example
 from src.rule import lf
 from src.rule.semQL import Sup, Sel, Order, Root, Filter, A, N, C, T, Root1
@@ -26,15 +26,25 @@ wordnet_lemmatizer = WordNetLemmatizer()
 
 
 def load_word_emb(file_name, use_small=False):
-    print ('Loading word embedding from %s'%file_name)
-    ret = {}
-    with open(file_name) as inf:
-        for idx, line in enumerate(inf):
-            if (use_small and idx >= 500000):
-                break
-            info = line.strip().split(' ')
-            if info[0].lower() not in ret:
-                ret[info[0]] = np.array(list(map(lambda x:float(x), info[1:])))
+    if os.path.exists("./data/glove.pickle"):
+        print('Loading word embedding from glove.pickle')
+        with open('./data/glove.pickle', 'rb') as handle:
+            ret = pickle.load(handle)
+    else:
+        print ('Loading word embedding from %s'%file_name)
+        ret = {}
+        with open(file_name) as inf:
+            for idx, line in enumerate(inf):
+                # if idx == 100:
+                #     break
+                if (use_small and idx >= 500000):
+                   break
+                info = line.strip().split(' ')
+                if info[0].lower() not in ret:
+                    ret[info[0]] = np.array(list(map(lambda x:float(x), info[1:])))
+        with open("./data/glove.pickle", 'wb') as handle:
+            pickle.dump(ret, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
     return ret
 
 def lower_keys(x):
@@ -74,14 +84,14 @@ def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type,
                    col_set_iter, sql):
     """
     question_arg: [["how"], ["many"], ["singer"], ... ]
-    question_arg_type: [["NONE"]], ["NONE"], ["table"], ...]
+    question_arg_type: [["NONE"]], ["NONE"], ["table:singer"], ...]
     one_hot_type: Tensor(len(question_arg) x 5)
                   for each token marks if it's:
-                      table/column/agg/MORE/MOST/value
+                      table/column/agg/MORE/MOST/value/
     col_set_type: Tensor(len(col_set_iter) x 4)
             col_set_type[col][0] = how many times did $col appear in question tokens
-            col_set_type[col][1] = 5, if token/span was marked with 'col'
-            col_set_type[col][2] = 5, if token/span was marked with $col
+            col_set_type[col][1] = 5, if col was linked to a token
+            col_set_type[col][2] = 5, if token was marked with $col
             col_set_type[col][3] = how many times did $col appear in question spans
     col_set_iter: [['*'], ['stadium', 'id'], ['location'], ['highest'], 
                    ['singer', 'id'], ...]
@@ -91,16 +101,19 @@ def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type,
          }
     """
     for count_q, t_q in enumerate(question_arg_type):
+        # t_q =  ["table:singer", ...]
         t = t_q[0]
         if t == 'NONE':
             continue
-        elif t == 'table':
+        elif t.startswith("table:"):
             one_hot_type[count_q][0] = 1
             question_arg[count_q] = ['table'] + question_arg[count_q]
-        elif t == 'col':
+        elif t.startswith("col:"):
+            col_name = t[4:]
             one_hot_type[count_q][1] = 1
             try:
-                col_set_type[col_set_iter.index(question_arg[count_q])][1] = 5
+                # col_set_type[col_set_iter.index(question_arg[count_q])][1] = 5
+                col_set_type[sql['col_set'].index(col_name)][1] = 5
                 question_arg[count_q] = ['column'] + question_arg[count_q]
             except:
                 print(col_set_iter, question_arg[count_q])
@@ -111,11 +124,12 @@ def schema_linking(question_arg, question_arg_type, one_hot_type, col_set_type,
             one_hot_type[count_q][3] = 1
         elif t == 'MOST':
             one_hot_type[count_q][4] = 1
-        elif t == 'value':
+        elif t == 'value': #token is number
             one_hot_type[count_q][5] = 1
             question_arg[count_q] = ['value'] + question_arg[count_q]
         else:
-            # column name
+            # token/span is string value and was linked to a column through
+            # ConceptNet
             if len(t_q) == 1:
                 for col_probase in t_q:
                     if col_probase == 'asd':
@@ -367,8 +381,8 @@ def load_dataset(dataset_dir, use_small=False):
     print("Loading from datasets...")
 
     TABLE_PATH = os.path.join(dataset_dir, "tables.json")
-    TRAIN_PATH = os.path.join(dataset_dir, "train.json")
-    DEV_PATH = os.path.join(dataset_dir, "dev.json")
+    TRAIN_PATH = os.path.join(dataset_dir, "train_sl.json")
+    DEV_PATH = os.path.join(dataset_dir, "dev_sl.json")
     with open(TABLE_PATH) as inf:
         print("Loading data from %s"%TABLE_PATH)
         table_data = json.load(inf)

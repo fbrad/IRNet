@@ -19,6 +19,7 @@ import torch
 import torch.optim as optim
 import tqdm
 import copy
+import pickle
 
 from src import args as arg
 from src import utils
@@ -65,6 +66,8 @@ def train(args):
         model.load_state_dict(pretrained_modeled)
 
     model.word_emb = utils.load_word_emb(args.glove_embed_path)
+    
+
     # begin train
 
     model_save_path = utils.init_log_checkpoint_path(args)
@@ -74,6 +77,7 @@ def train(args):
     try:
         with open(os.path.join(model_save_path, 'epoch.log'), 'w') as epoch_fd:
             for epoch in tqdm.tqdm(range(args.epoch)):
+                # TODO: move this after loss = utils.epoch_train(...)
                 if args.lr_scheduler:
                     scheduler.step()
                 epoch_begin = time.time()

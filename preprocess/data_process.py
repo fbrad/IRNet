@@ -272,9 +272,9 @@ def process_datas_bert_linking(datas, args):
         q_wordpiece_ids = args.tokenizer.convert_tokens_to_ids(q_toks)
         q_offset = len(q_wordpiece_ids)
 
-        seq_ids = torch.LongTensor([q_wordpiece_ids + db_wordpiece_ids])
+        seq_ids = torch.LongTensor([q_wordpiece_ids + db_wordpiece_ids]).to('cuda:0')
         seq_type_ids = torch.LongTensor([[0] * len(q_wordpiece_ids) + 
-                                         [1] * len(db_wordpiece_ids)])
+                                         [1] * len(db_wordpiece_ids)]).to('cuda:0')
 
         # compute embedding for each db entity, by averaging its span tokens
         with torch.no_grad():
@@ -282,7 +282,7 @@ def process_datas_bert_linking(datas, args):
             last_hidden, _, _ = model(input_ids=seq_ids,
                                       token_type_ids=seq_type_ids)
 
-        entities_output = torch.zeros(len(db_entities), 768)
+        entities_output = torch.zeros(len(db_entities), 768).to('cuda:0')
         entity_offset = q_offset
         for idx, entity in enumerate(db_entities):
             if entity == "[SEP]":
@@ -411,7 +411,7 @@ def process_datas_bert_linking(datas, args):
                                 if col in mi:
                                     return col
 
-            # search value spans (spans surrounded by quotations '')
+            # search string value spans (spans surrounded by quotations '')
             # in ConceptNet;
             end_idx, symbol = group_symbol(question_toks, idx, num_toks)
             if symbol:
@@ -453,7 +453,7 @@ def process_datas_bert_linking(datas, args):
                 idx = end_idx
                 continue
 
-            # check if number
+            # check if token is a number value
             result = group_digital(question_toks, idx)
             if result is True:
                 #print("     number token %s", question_toks[idx])
@@ -478,12 +478,16 @@ def process_datas_bert_linking(datas, args):
                 ent_type = 'table'
             else:
                 ent_type = 'col'
+            if db_entities[max_idx] == '[SEP]':
+                ent_name = db_entities[max_idx-1]
+            else:
+                ent_name = db_entities[max_idx]
             #print("     BERT linking: %s->%s (%s)" % (question_toks[idx], 
             #                                          db_entities[max_idx], 
             #                                          ent_type))
 
             tok_concol.append([question_toks[idx]])
-            type_concol.append([ent_type])
+            type_concol.append([ent_type + ":" + ent_name])
             idx += 1
             continue
 
@@ -519,6 +523,7 @@ if __name__ == '__main__':
             'bert-base-uncased',
             output_hidden_states=True
         )
+        model.cuda()
         model.eval()
         cos_sim = CosineSimilarity(dim=1)
         args.model = model
@@ -539,7 +544,7 @@ if __name__ == '__main__':
         process_result = process_datas(datas, args)
 
     
-    """
+    #"""
     with open(args.output, 'w') as f:
         json.dump(datas, f, indent=4)
-    """
+    #"""
